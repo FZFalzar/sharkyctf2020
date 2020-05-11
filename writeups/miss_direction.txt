@@ -1,7 +1,9 @@
 ### miss_direction ###
 Falzar @ UQ Cyber
 
-TLS Callback abuse
+TLS Callback abuse >:(
+
+Tools used: x32/64dbg
 
 1) break at Entry Point 1 (TLSCallback0) and 0x4013C0 and continue
 TLSCallback is executed before the entry point of function
