@@ -1,0 +1,264 @@
+## secure_db ##
+Falzar @ UQ Cyber
+
+* because not everyone has access to IDA, this guide will primarily use GHIDRA (which will be harder)
+** Take the decompiler output with a pinch of salt, it may not be accurate!!
+
+PREFACE:
+This is also going to be a walkthrough on how and why you should be fixing your functions and funcsigs properly! :D
+
+Prequisites: lldb, GHIDRA
+
+1) Load binary in GHIDRA, look at segments, notice segment_2 is the ELF header, this is where we will begin looking.
+Find the e_entry value, this will tell us where the program's main routine is. You may want to rename the label to something
+like "start" to keep track of things
+
+           08048018 70 89 04 08     ddw       LAB_08048970            e_entry
+
+2) Open the binary in lldb, put the output file name, run it once until it waits for input, then hit Ctrl+C to SIGSTOP.
+This is required for lldb to know and resolve our breakpoint later on
+
+lldb ./secure_db
+(lldb) r ./secure_db ./output
+
+3) Put a break at 0x8048970, and restart binary.
+
+(lldb) b 0x8048970
+(lldb) r ./secure_db ./output
+
+We should now be in our breakpoint at "start". Refer to GHIDRA and check the following:
+ 
+        08048970 31 ed           XOR        EBP,EBP
+
+Notice the libc_start_main call at
+
+        0804899d e8 be fc        CALL       __libc_start_main                                undefined __libc_start_main()
+                 ff ff
+
+This means that the PUSH instructions above are the arguments for libc_start_main, we need to locate the value
+corresponding to main(). Don't forget that the arguments are PUSHed from back to front!
+
+                             start+1                                         XREF[5,6]:   08048018(*), 08048bbc(*), 
+                             start                                                        08048bc0(R), 08048bd5(R), 
+                                                                                          08048c2f(R), 08048bc0(R), 
+                                                                                          08048be3(*), 08048bf2(*), 
+                                                                                          08048c55(*), 
+                                                                                          FUN_08048c60:08048e72(*), 
+                                                                                          FUN_08048c60:08048e85(*)  
+        08048970 31 ed           XOR        EBP,EBP
+        08048972 5e              POP        ESI
+        08048973 89 e1           MOV        ECX,ESP
+        08048975 83 e4 f0        AND        ESP,0xfffffff0
+        08048978 50              PUSH       EAX
+        08048979 54              PUSH       ESP=>local_48
+        0804897a 52              PUSH       EDX
+        0804897b e8 23 00        CALL       __i686.get_pc_thunk.bx                           undefined __i686.get_pc_thunk.bx()
+                 00 00
+        08048980 81 c3 80        ADD        EBX,0x4680
+                 46 00 00
+        08048986 8d 83 50        LEA        EAX,[EBX + 0xffffd450]=>DAT_0804a450             = F3h
+                 d4 ff ff
+        0804898c 50              PUSH       EAX=>DAT_0804a450                                = F3h
+        0804898d 8d 83 f0        LEA        EAX,[EBX + 0xffffd3f0]=>LAB_0804a3f0
+                 d3 ff ff
+        08048993 50              PUSH       EAX=>LAB_0804a3f0
+        08048994 51              PUSH       ECX                 
+        08048995 56              PUSH       ESI=>LAB_0804873e   
+        08048996 c7 c0 00        MOV        EAX,LAB_08048700    
+                 87 04 08
+        0804899c 50              PUSH       EAX=>LAB_08048700   <<<--------------------------------------------------------------main()
+        0804899d e8 be fc        CALL       __libc_start_main                                undefined __libc_start_main()
+                 ff ff
+        080489a2 f4              HLT
+
+Rename it to something nice. Now we need to do some manipulation in GHIDRA
+
+4) Jump to LAB_08048700 in GHIDRA, now delete the auto-created function at 0x8048707 (Right Click on Function Name -> Delete Function)
+Then, select 0x8048700 and right click -> Create Function, name the function something nice like "main"
+You should now see something like
+
+                             **************************************************************
+                             *                          FUNCTION                          *
+                             **************************************************************
+                             undefined main(undefined4 param_1, undefined4 pa
+             <some stuff here.............>  
+                             FUN_08048700                                    XREF[2]:     08048996(*), 0804899c(*)  
+        08048700 8d 4c 24 04     LEA        ECX=>param_1,[ESP + 0x4]
+
+Hit Analysis -> Auto Analyze and the decompiler output should be semi-readable now. We are not done yet!
+You may choose at this moment in time to change your function signature of main to:
+    int main(int argc, char** argv)
+
+5) In the decompiler, look for the line "_DAT_0804d0a4 = FUN_08048b70();" and jump to that address
+Then, locate the following set of instructions.
+
+        08048b8e e8 00 00        CALL       LAB_08048b93
+                 00 00
+                             LAB_08048b93                                    XREF[1]:     08048b8e(j)  
+        08048b93 83 04 24 05     ADD        dword ptr [ESP]=>local_40,offset LAB_08048b98
+        08048b97 c3              RET
+
+What this does is that it sets a value in the ESP register to the location of LAB_08048b98.
+Notice the following in the next step:
+
+6) Select LAB_08048b98 in disassembly, and Right Click -> Create Function
+Going through the decompiled code briefly:
+
+  do {
+    while (puVar5 = puVar2, (*puVar5 & 0xff) != (uint)bStack0000001b + (uint)bStack0000001b) {
+      iStack8 = iStack8 + (*puVar5 & 0xff);
+      puVar2 = (uint *)((int)puVar5 + 1);
+      if ((uint *)((int)puVar5 + 1) == (uint *)&DAT_0804a488) goto LAB_08048bf0;
+    }
+    puts(param_3);
+    uVar1 = *puVar5;
+    *(char *)(unaff_EBX + 0xa0) = *(char *)(unaff_EBX + 0xa0) + '\x01';
+    iStack8 = iStack8 + (uVar1 & 0xff);
+    puVar2 = (uint *)((int)puVar5 + 1);
+  } while ((uint *)((int)puVar5 + 1) != (uint *)&DAT_0804a488);
+  
+This portion of the code actually checks if the input you entered is equal to the key.
+
+Upon success, it then opens a socket, connects to a server (149.202.221.103) and downloads a file.
+The contents of this file are then processed through FUN_0804a1e0 (Which looks like a simple XOR function),
+before getting written out to the file specified in argv[].
+
+Now we know roughly how the program works, so it is time to reverse the password
+
+7) Return to our main() function at LAB_08048700 and notice the following:
+
+...
+printf_chk()
+fgets(...)
+strcspn(...)
+strncpy(...0x10)
+
+From this, we can deduce that this is the part that processes user input. The argument of strncpy indicates that only 16 bytes would be processed,
+of which the last byte is set to null so that is likely to be the length of our password.
+
+Also, there's one whole chunk of if conditions:
+
+    if (((((DAT_0804d0c0 == *PTR_DAT_0804d068) && (DAT_0804d0c1 == PTR_DAT_0804d068[1])) &&
+         (DAT_0804d0c2 == PTR_DAT_0804d068[2])) &&
+        (((DAT_0804d0c3 == PTR_DAT_0804d068[3] && (DAT_0804d0c4 == PTR_DAT_0804d068[4])) &&
+         ((DAT_0804d0c5 == PTR_DAT_0804d068[5] &&
+          ((DAT_0804d0c6 == PTR_DAT_0804d068[6] && (DAT_0804d0c7 == PTR_DAT_0804d068[7])))))))) &&
+       ((DAT_0804d0c8 == PTR_DAT_0804d068[8] &&
+        (((((DAT_0804d0c9 == PTR_DAT_0804d068[9] && (DAT_0804d0ca == PTR_DAT_0804d068[10])) &&
+           (DAT_0804d0cb == PTR_DAT_0804d068[0xb])) &&
+          ((DAT_0804d0cc == PTR_DAT_0804d068[0xc] && (DAT_0804d0cd == PTR_DAT_0804d068[0xd])))) &&
+         (DAT_0804d0ce == PTR_DAT_0804d068[0xe]))))))
+         
+Inspecting PTR_DAT_0804d068 gives us the following string: N3kviX7-vXEqvlp
+
+However... life is not simple :(
+Inputting the password will show that it is wrong. So, some manipulation must be taking place to our input after strncpy.
+
+Time to investigate! Remember that the decompiler is not 100% accurate and may hide instructions! Disassembly is your best friend
+
+8) Look for the instruction at 0x080487b0 and put a breakpoint there in lldb
+
+(lldb) b 0x080487b0
+
+9) Restart the program and hit continue once (triggered at start() from the earlier breakpoint)
+
+(lldb) run ./output
+(lldb) c
+
+Enter an input, such as A*16 or something recognizable, then hit Enter. 
+We should now be at our breakpoint in main() at 0x080487b0. Disassemble the region using:
+
+(lldb) disas -s 0x080487b0
+
+And pay close attention to the following JUMP at 0x80487b8. Use the following to step through instruction by instruction
+
+(lldb) ni
+
+0x80487B8: JE 0x080487B4  
+
+Running "disas -s 0x080487B4" should show you that the jump is now:
+
+(lldb) disas -s 0x080487B4
+0x80487b4: JMP 0x80487BB
+
+notice that this did not appear in the disassembly earlier, so it jumped into the middle of the instruction, and thus changing the context
+of that instruction. GENIUS!
+
+Now, run disas on 0x80487BB:
+
+(lldb) disas -s 0x80487BB
+0x80487bb: movl %0x20817da1, %eax   <----- take note of the value being moved into eax!
+0x80487c0: je  0x80487c5
+0x80487c2: jne 0x80487c5            <----- The following 2 jumps have no difference, but they do the same, changing the context when read at offset
+0x80487c4: call 0x58d48909          <----- This is transformed into the following instructions when read at 0x80487c5
+0x80487c9: xorl %eax, %eax          <----- untouched
+
+AFTER JE/JNE TO 0x80487C5
+0x80487c5: incl %eax                <-- increment eax by 1
+0x80487c6: addl %edx, %eax          <-- adds %edx (in this case, 0x5EB if you read the register) to %eax
+0x80487c8: pushl %eax               <-- pushes eax onto the stack (esp)
+0x80487c9: xorl %eax, %eax          <-- clears %eax 
+0x80487cb: je 0x80487dc             <-- jump after done
+
+0x80487dc: je 0x80487cd
+0x80487cd: addl %0x2081838d, (%esp) 
+
+this effectively doubles the number we have, so value at esp is now 0x4103071a TAKE NOTE OF THIS VALUE
+
+0x80487d4: calll 0x8048a90
+...
+0x8048a92: calll 0x8048fc5
+0x8048fc5: movl (%esp), %ecx        <-- moves top value from %esp into %ecx 0x8048a97
+0x8048fc8: retl                     <-- returns to 0x8048a97
+0x8048a97: addl %0x4569, %ecx       <-- adds to ecx, produces a new address 0x8048d00
+0x8048a9d: pushl %esi               <-- Our input is now pushed onto the stack!
+0x8048a9e: pushl %ebx
+0x8048a9f: calll 0x8048aa4
+...
+0x8048aa4: addl %0x05, (%esp)       <-- 0x8048aa4+5 = 0x8048aa9
+0x8048aa8: retl                     <-- returns to 0x8048aa9
+0x8048aa9: leal 0xc0(%ecx), %edi    <-- add 0xc0 to %ecx and place result in %edi.
+                                        0x8048d00 + c0 = 0x8048dc0 <- refer to ghidra decompilation earlier, 
+                                        this is supposed to be our input after manipulation!
+
+0x8048aaf: movl %edi, %esi           
+0x8048ab1: jmp 0x8048ac0
+##
+0x8048ac0: movl (%esi), %edx        <-- move value at %esi into %edi, so now %edi contains our input!
+                                        You should expect to see 0x41414141 if you input all As
+0x8048ac2: addl %0x04, %esi         <-- increment $esi by 4 (this will to point to next 4 bytes of our input)
+0x8048ac5: leal -0x1010101(%edx), %eax  <-- subtracts 1 from each byte from edx, and stores it in eax
+                                            0x41414141 - 0x01010101 = 0x40404040
+                                            
+0x8048acb: notl %edx                <-- edx is still 0x41414141 -NOT-> 0xBEBEBEBE
+0x8048acd: andl %edx, %eax          <-- eax is now 0x00000000
+0x8048acf: andl $0x80808080, %eax   <--
+0x8048ad4: je 0x8048ac0             <-- goes back to load our set of bytes at 0x8048ac0, refer to ##
+
+After all our bytes have been loaded, some bytes down...
+
+0x8048b1b: xorb (%edi, %edx), %al   <-- Take values at edi, edx, %al and perform an 8bit XOR, %eax is now 0x00000041
+0x8048b1e: xorl %ecx, %eax          <-- XOR ecx and eax!
+
+Now we know how the password manipulation works!!!!
+
+10) Use your favorite XOR tool, and perform the following:
+
+4E 33 6B 76 69 58 37 2d 76 58 45 71 76 6c 70 <-- hex("N3kviX7-vXEqvlp")
+XOR
+1a070341                                     <-- endian swap 4103071a
+
+= T4h7s_4ll_F0lks
+
+11) Input password into binary, it will download and decrypt to create a sqlite DB
+
+12) Inspect the flag table :) WIN!
+
+
+
+
+                                    
+
+
+
+
