@@ -19,7 +19,7 @@ like "start" to keep track of things
 This is required for lldb to know and resolve our breakpoint later on
 
 lldb ./secure_db
-(lldb) r ./secure_db ./output
+(lldb) r ./output
 
 3) Put a break at 0x8048970, and restart binary.
 
