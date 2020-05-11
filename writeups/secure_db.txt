@@ -24,7 +24,7 @@ lldb ./secure_db
 3) Put a break at 0x8048970, and restart binary.
 
 (lldb) b 0x8048970
-(lldb) r ./secure_db ./output
+(lldb) r ./output
 
 We should now be in our breakpoint at "start". Refer to GHIDRA and check the following:
  
