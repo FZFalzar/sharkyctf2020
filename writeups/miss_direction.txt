@@ -1,0 +1,100 @@
+### miss_direction ###
+Falzar @ UQ Cyber
+
+TLS Callback abuse
+
+1) break at Entry Point 1 (TLSCallback0) and 0x4013C0 and continue
+TLSCallback is executed before the entry point of function
+
+0x4013C0 is first deobfuscation function, we will inspect binary from here
+
+2) break at 0x4013E6
+
+We need to take the jump at 0x4013E8 because the JNE at 0x4013E6 will bring us to exit program
+
+004013E6 | 75 02                    | jne miss_direction.4013EA               |
+004013E8 | 74 0F                    | je miss_direction.4013F9                | <<---
+
+Set new EIP origin to 0x4013F9 aka we take the jump
+
+3) We return back to TLSCallback0, having successfully passed the first check
+
+4) break at 0x401104 and continue
+00401104 | E8 F2020000              | call miss_direction.4013FB              |
+
+This is the second deobfuscation function, and will deobfuscate the real check
+Add a breakpoint at 0x4013Fb and continue
+
+5) at 0x40140F: 
+0040140A | B8 40144000              | mov eax,miss_direction.401440           | //loads the address 401440 into eax, this is the location of payload
+0040140F | B9 7B020000              | mov ecx,27B                             | //loads integer 27B into ecx. This is the size of payload to deobfuscate
+
+6) A while loop is then being done from 0x401414 to 0x40143E. The Exit condition is:
+
+00401439 | 83F9 00                  | cmp ecx,0                               |
+0040143C | 74 02                    | je miss_direction.401440                |
+
+When ECX = 0, the exit jump is taken. We can set a conditional breakpoint at 0x40143C, but for now watch the magic when you set a normal breakpoint at 0x40143C
+
+6) Watch the magic when you hit Continue. At 0x401440, the bytes start getting filled in 
+
+7) When ECX is 0, the exit jump is taken to 0x401440.
+00401440 | EA 8BEC81EC 5801         | jmp far 158:EC81EC8B                    |
+
+This however looks invalid, so we set new EIP origin at 0x401447 instead
+00401447 | 0000                     | add byte ptr ds:[eax],al                |
+
+8) Notice now that a ton of MOV instructions are now in place from 0x401449, this is the key for comparison against input
+00401449 | C645 E0 8B               | mov byte ptr ss:[ebp-20],8B             |
+0040144D | C645 E1 83               | mov byte ptr ss:[ebp-1F],83             |
+00401451 | C645 E2 8A               | mov byte ptr ss:[ebp-1E],8A             |
+00401455 | C645 E3 F6               | mov byte ptr ss:[ebp-1D],F6             |
+00401459 | C645 E4 FA               | mov byte ptr ss:[ebp-1C],FA             |
+0040145D | C645 E5 CB               | mov byte ptr ss:[ebp-1B],CB             |
+00401461 | C645 E6 83               | mov byte ptr ss:[ebp-1A],83             |
+00401465 | C645 E7 83               | mov byte ptr ss:[ebp-19],83             |
+00401469 | C645 E8 F5               | mov byte ptr ss:[ebp-18],F5             |
+0040146D | C645 E9 F4               | mov byte ptr ss:[ebp-17],F4             |
+00401471 | C645 EA FA               | mov byte ptr ss:[ebp-16],FA             |
+00401475 | C645 EB 82               | mov byte ptr ss:[ebp-15],82             |
+00401479 | C645 EC 8A               | mov byte ptr ss:[ebp-14],8A             |
+0040147D | C645 ED F6               | mov byte ptr ss:[ebp-13],F6             |
+00401481 | C645 EE 8E               | mov byte ptr ss:[ebp-12],8E             |
+00401485 | C645 EF 86               | mov byte ptr ss:[ebp-11],86             |
+00401489 | C645 F0 81               | mov byte ptr ss:[ebp-10],81             |
+0040148D | C645 F1 8B               | mov byte ptr ss:[ebp-F],8B              |
+00401491 | C645 F2 F6               | mov byte ptr ss:[ebp-E],F6              |
+00401495 | C645 F3 F9               | mov byte ptr ss:[ebp-D],F9              |
+00401499 | C645 F4 C7               | mov byte ptr ss:[ebp-C],C7              |
+0040149D | C645 F5 C7               | mov byte ptr ss:[ebp-B],C7              |
+004014A1 | C645 F6 83               | mov byte ptr ss:[ebp-A],83              |
+
+It however needs some massaging, as it does not look like valid ASCII yet.
+
+9) At 0x4014B4, this is where our input is loaded byte by byte for comparison, exit condition is at 0x4014BA
+
+004014BA | 74 16                    | je miss_direction.4014D2                |
+
+Put a breakpoint at 0x4014D2 and continue
+
+10) At 0x4014D2, this is where our input is checked to be equal to 23 bytes (0x17) length, and it quits if it is not
+004014D2 | 837D C8 17               | cmp dword ptr ss:[ebp-38],17            |
+004014D6 | 74 05                    | je miss_direction.4014DD                |
+
+The jump is taken to 0x4014DD if our input is ok. Put a breakpoint at 0x4014E4 as well. This is the jump that will bring us
+into the password check function
+
+004014E4 | EB 09                    | jmp miss_direction.4014EF               |
+
+11) The password check function is a While loop from 0x4014E6 to 0x40151E. Of interest are the following instructions inside:
+00401500 | 83C1 55                  | add ecx,55                              |
+00401503 | 83F1 42                  | xor ecx,42                              |
+
+This looks like our ECX register is added by 55 and then XORed by 42 to get the password.
+
+12) Extract the bytes from 8), then for each byte XOR by 42, then minus 55
+
+13) Password obtained! Launch binary as normal and input password :)
+tls_c4llbacks_wont_f00l
+
+
